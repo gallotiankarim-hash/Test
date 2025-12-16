@@ -4,23 +4,16 @@ from pathlib import Path
 from streamlit_javascript import st_javascript
 
 # ==================================================
-# LOAD POLICY (SINGLE SOURCE OF TRUTH)
+# LOAD POLICY
 # ==================================================
-POLICY_FILE = Path("policy.yaml")
+policy = yaml.safe_load(Path("policy.yaml").read_text())
 
-if not POLICY_FILE.exists():
-    st.error("policy.yaml missing — application halted")
-    st.stop()
-
-policy = yaml.safe_load(POLICY_FILE.read_text())
-
-APP_MODE = policy["app"]["mode"]
 FEATURES = policy["features"]
 SIMULATION = policy["simulation"]
 UI = policy["ui"]
 
 # ==================================================
-# PAGE CONFIG
+# PAGE
 # ==================================================
 st.set_page_config(
     page_title=policy["app"]["name"],
@@ -29,13 +22,11 @@ st.set_page_config(
 )
 
 # ==================================================
-# SESSION STATE (DETERMINISTIC)
+# SESSION STATE
 # ==================================================
-if "scan_state" not in st.session_state:
-    st.session_state.scan_state = "idle"  # idle | scanning | done
-
-if "signals" not in st.session_state:
-    st.session_state.signals = None
+st.session_state.setdefault("scan_requested", False)
+st.session_state.setdefault("scan_done", False)
+st.session_state.setdefault("signals", None)
 
 # ==================================================
 # STYLE
@@ -48,25 +39,19 @@ body { background:#0b0f17; color:#e6edf3; }
   border:1px solid #1f2a44;
   border-radius:18px;
   padding:1.8rem;
-  margin-bottom:1.2rem;
 }
 .badge {
   padding:.35rem .9rem;
   border-radius:999px;
   font-size:.75rem;
   font-weight:700;
-  letter-spacing:.05em;
 }
 .low { background:#064e3b; color:#6ee7b7; }
 .mod { background:#78350f; color:#fde68a; }
 .high{ background:#7f1d1d; color:#fecaca; }
 .idle{ background:#1f2937; color:#9ca3af; }
-.score { font-size:3.2rem; font-weight:900; }
+.score { font-size:3rem; font-weight:900; }
 .muted { color:#9aa4b2; font-size:.85rem; }
-button[kind="primary"] {
-  background:#2563eb;
-  border-radius:12px;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -74,114 +59,89 @@ button[kind="primary"] {
 # HEADER
 # ==================================================
 st.markdown(f"## 🛡️ {policy['app']['name']}")
-st.markdown(
-    "<div class='muted'>Real‑time communication visibility assessment</div>",
-    unsafe_allow_html=True
-)
+st.caption("Real‑time communication visibility assessment")
 st.divider()
 
 # ==================================================
-# ACTION
+# BUTTON
 # ==================================================
-if st.button("🔎 Run visibility scan", type="primary"):
-    st.session_state.scan_state = "scanning"
+if st.button("🔎 Run visibility scan"):
+    st.session_state.scan_requested = True
+    st.session_state.scan_done = False
     st.session_state.signals = None
 
 # ==================================================
-# SCAN (REAL JS → PYTHON)
+# JAVASCRIPT SCAN (NON BLOCKING)
 # ==================================================
-if (
-    st.session_state.scan_state == "scanning"
-    and APP_MODE == "true"
-    and FEATURES["webrtc"]["enabled"]
-):
-    with st.spinner("Scanning network visibility…"):
-        result = st_javascript(
-            """
-            async () => {
-              const r = {
-                hasTURN:false,
-                hasSRFLX:false,
-                hasHOST:false,
-                ipv6:false,
-                mdns:false,
-                interfaces:[]
-              };
+if st.session_state.scan_requested and not st.session_state.scan_done:
 
-              const pc = new RTCPeerConnection({
-                iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-              });
+    st.info("Scanning communication visibility…")
 
-              pc.createDataChannel("cb");
+    js_result = st_javascript(
+        """
+        async () => {
+          const r = {
+            hasTURN:false,
+            hasSRFLX:false,
+            hasHOST:false,
+            ipv6:false,
+            mdns:false,
+            interfaces:[]
+          };
 
-              pc.onicecandidate = e => {
-                if (!e || !e.candidate) return;
-                const c = e.candidate.candidate;
+          const pc = new RTCPeerConnection({
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+          });
 
-                if (c.includes(" typ relay ")) r.hasTURN = true;
-                if (c.includes(" typ srflx ")) r.hasSRFLX = true;
-                if (c.includes(" typ host ")) r.hasHOST = true;
-                if (c.includes(".local")) r.mdns = true;
-                if (c.toLowerCase().includes("ip6")) r.ipv6 = true;
+          pc.createDataChannel("cb");
 
-                const ip = c.match(/([0-9]{1,3}(\\.[0-9]{1,3}){3})/);
-                if (ip) {
-                  const v = ip[1];
-                  if (
-                    v.startsWith("10.") ||
-                    v.startsWith("192.168.") ||
-                    v.startsWith("172.")
-                  ) {
-                    if (!r.interfaces.includes("LAN")) r.interfaces.push("LAN");
-                  } else {
-                    if (!r.interfaces.includes("PUBLIC")) r.interfaces.push("PUBLIC");
-                  }
-                }
-              };
+          pc.onicecandidate = e => {
+            if (!e || !e.candidate) return;
+            const c = e.candidate.candidate;
 
-              const offer = await pc.createOffer();
-              await pc.setLocalDescription(offer);
+            if (c.includes(" typ relay ")) r.hasTURN = true;
+            if (c.includes(" typ srflx ")) r.hasSRFLX = true;
+            if (c.includes(" typ host ")) r.hasHOST = true;
+            if (c.includes(".local")) r.mdns = true;
+            if (c.toLowerCase().includes("ip6")) r.ipv6 = true;
 
-              await new Promise(resolve => setTimeout(resolve, 3000));
-              pc.close();
-
-              return r;
+            const ip = c.match(/([0-9]{1,3}(\\.[0-9]{1,3}){3})/);
+            if (ip) {
+              const v = ip[1];
+              if (
+                v.startsWith("10.") ||
+                v.startsWith("192.168.") ||
+                v.startsWith("172.")
+              ) {
+                if (!r.interfaces.includes("LAN")) r.interfaces.push("LAN");
+              } else {
+                if (!r.interfaces.includes("PUBLIC")) r.interfaces.push("PUBLIC");
+              }
             }
-            """,
-            key="webrtc_scan"
-        )
+          };
 
-        if result:
-            st.session_state.signals = result
-            st.session_state.scan_state = "done"
-
-# ==================================================
-# SIMULATION (POLICY‑DRIVEN ONLY)
-# ==================================================
-if SIMULATION["enabled"]:
-    st.session_state.signals = {
-        "mock_low": {
-            "hasTURN": True, "hasHOST": False, "hasSRFLX": False, "interfaces": []
-        },
-        "mock_medium": {
-            "hasTURN": False, "hasHOST": True, "hasSRFLX": True, "interfaces": ["LAN"]
-        },
-        "mock_high": {
-            "hasTURN": False, "hasHOST": True, "hasSRFLX": True,
-            "interfaces": ["LAN", "PUBLIC"]
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          await new Promise(r => setTimeout(r, 2500));
+          pc.close();
+          return r;
         }
-    }.get(SIMULATION["dataset"], None)
-    st.session_state.scan_state = "done"
+        """,
+        key="scan_js"
+    )
 
+    # IMPORTANT: accept result when it arrives (even next rerun)
+    if js_result is not None:
+        st.session_state.signals = js_result
+        st.session_state.scan_done = True
+
+# ==================================================
+# SCORE
+# ==================================================
 signals = st.session_state.signals
 
-# ==================================================
-# VERDICT & SCORE (ONLY IF SCAN DONE)
-# ==================================================
-if st.session_state.scan_state == "done" and signals:
-
-    score = policy["features"]["scoring"]["max_score"]
-
+if st.session_state.scan_done and signals:
+    score = 100
     if signals.get("hasHOST"): score -= 15
     if signals.get("hasSRFLX"): score -= 20
     if not signals.get("hasTURN"): score -= 15
@@ -190,7 +150,6 @@ if st.session_state.scan_state == "done" and signals:
     if len(signals.get("interfaces", [])) > 1: score -= 10
     if signals.get("ipv6"): score -= 10
     if not signals.get("mdns"): score -= 5
-
     score = max(score, 0)
 
     if score >= 75:
@@ -200,13 +159,13 @@ if st.session_state.scan_state == "done" and signals:
     else:
         verdict, cls = "HIGH VISIBILITY", "high"
 
-elif st.session_state.scan_state == "scanning":
+elif st.session_state.scan_requested:
     verdict, cls, score = "SCANNING…", "mod", None
 else:
     verdict, cls, score = "NO SCAN RUN", "idle", None
 
 # ==================================================
-# UI OUTPUT
+# UI
 # ==================================================
 st.markdown(f"""
 <div class="card">
@@ -222,7 +181,6 @@ if UI["show_technical_details"] and signals:
     with st.expander("🔍 Technical signals"):
         st.json(signals)
 
-st.divider()
 st.caption(
     "Behavior controlled by policy.yaml — passive, client‑side, ethical by design."
 )
