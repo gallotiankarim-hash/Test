@@ -7,9 +7,6 @@ from streamlit_javascript import st_javascript
 # LOAD POLICY
 # ==================================================
 policy = yaml.safe_load(Path("policy.yaml").read_text())
-
-FEATURES = policy["features"]
-SIMULATION = policy["simulation"]
 UI = policy["ui"]
 
 # ==================================================
@@ -22,11 +19,11 @@ st.set_page_config(
 )
 
 # ==================================================
-# SESSION STATE
+# SESSION STATE (LOCKED FSM)
 # ==================================================
-st.session_state.setdefault("scan_requested", False)
-st.session_state.setdefault("scan_done", False)
+st.session_state.setdefault("scan_phase", "idle")  # idle | running | done
 st.session_state.setdefault("signals", None)
+st.session_state.setdefault("js_key", 0)
 
 # ==================================================
 # STYLE
@@ -63,17 +60,17 @@ st.caption("Real‑time communication visibility assessment")
 st.divider()
 
 # ==================================================
-# BUTTON
+# ACTION
 # ==================================================
 if st.button("🔎 Run visibility scan"):
-    st.session_state.scan_requested = True
-    st.session_state.scan_done = False
+    st.session_state.scan_phase = "running"
     st.session_state.signals = None
+    st.session_state.js_key += 1  # 🔐 force one‑time JS execution
 
 # ==================================================
-# JAVASCRIPT SCAN (NON BLOCKING)
+# WEBRTC SCAN (ONE‑SHOT)
 # ==================================================
-if st.session_state.scan_requested and not st.session_state.scan_done:
+if st.session_state.scan_phase == "running":
 
     st.info("Scanning communication visibility…")
 
@@ -127,20 +124,19 @@ if st.session_state.scan_requested and not st.session_state.scan_done:
           return r;
         }
         """,
-        key="scan_js"
+        key=f"webrtc_scan_{st.session_state.js_key}"
     )
 
-    # IMPORTANT: accept result when it arrives (even next rerun)
     if js_result is not None:
         st.session_state.signals = js_result
-        st.session_state.scan_done = True
+        st.session_state.scan_phase = "done"
 
 # ==================================================
-# SCORE
+# SCORING
 # ==================================================
 signals = st.session_state.signals
 
-if st.session_state.scan_done and signals:
+if st.session_state.scan_phase == "done" and signals:
     score = 100
     if signals.get("hasHOST"): score -= 15
     if signals.get("hasSRFLX"): score -= 20
@@ -159,7 +155,7 @@ if st.session_state.scan_done and signals:
     else:
         verdict, cls = "HIGH VISIBILITY", "high"
 
-elif st.session_state.scan_requested:
+elif st.session_state.scan_phase == "running":
     verdict, cls, score = "SCANNING…", "mod", None
 else:
     verdict, cls, score = "NO SCAN RUN", "idle", None
