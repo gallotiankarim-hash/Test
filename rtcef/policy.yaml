@@ -1,0 +1,35 @@
+app:
+  name: CallBreach
+  mode: true        # true | simulation
+  environment: production
+
+ethics:
+  passive_only: true
+  no_third_party: true
+  no_identification: true
+  no_geolocation: true
+  no_fingerprinting: true
+
+features:
+  webrtc:
+    enabled: true
+    collect_ice: true
+    collect_ip: true
+    collect_interface: true
+    collect_ipv6: true
+    collect_mdns: true
+    collect_turn_usage: true
+
+  scoring:
+    enabled: true
+    correlated: true
+    max_score: 100
+
+simulation:
+  enabled: false
+  dataset: none     # mock_low | mock_medium | mock_high
+
+ui:
+  show_technical_details: true
+  show_score: true
+  show_recommendations: false
