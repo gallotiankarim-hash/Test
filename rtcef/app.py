@@ -7,17 +7,7 @@ import streamlit.components.v1 as components
 # LOAD POLICY
 # ==================================================
 policy = yaml.safe_load(Path("policy.yaml").read_text())
-
 APP_NAME = policy["app"]["name"]
-
-# ==================================================
-# PAGE CONFIG
-# ==================================================
-st.set_page_config(
-    page_title=APP_NAME,
-    page_icon="🛡️",
-    layout="centered"
-)
 
 # ==================================================
 # LANGUAGE SELECTOR
@@ -68,8 +58,10 @@ lang = st.selectbox("Language", list(LANGS.keys()), index=0)
 T = LANGS[lang]
 
 # ==================================================
-# STYLE
+# PAGE CONFIG & STYLE
 # ==================================================
+st.set_page_config(page_title=APP_NAME, page_icon="🛡️", layout="centered")
+
 st.markdown("""
 <style>
 body { background:#0b0f17; color:#e6edf3; }
@@ -92,6 +84,7 @@ body { background:#0b0f17; color:#e6edf3; }
 .idle{ background:#1f2937; color:#9ca3af; }
 .score { font-size:3.2rem; font-weight:900; }
 .muted { color:#9aa4b2; font-size:.85rem; }
+button { cursor:pointer; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -104,7 +97,7 @@ st.divider()
 st.markdown(f"<div class='muted'>{T['intro']}</div>", unsafe_allow_html=True)
 
 # ==================================================
-# CLIENT‑SIDE SCAN (REAL WEBRTC)
+# CLIENT-SIDE WEBRTC SCAN
 # ==================================================
 components.html(
 f"""
@@ -124,8 +117,7 @@ f"""
     border:none;
     background:#2563eb;
     color:white;
-    font-weight:600;
-    cursor:pointer;">
+    font-weight:600;">
     ▶ {T["start"]}
   </button>
 </div>
@@ -145,10 +137,7 @@ async function runScan() {{
     ipv6:false, mdns:false, interfaces:[]
   }};
 
-  const pc = new RTCPeerConnection({{
-    iceServers:[{{urls:"stun:stun.l.google.com:19302"}}]
-  }});
-
+  const pc = new RTCPeerConnection({{iceServers:[{{urls:"stun:stun.l.google.com:19302"}}]}});
   pc.createDataChannel("cb");
 
   pc.onicecandidate = e => {{
@@ -187,12 +176,13 @@ async function runScan() {{
   if (!r.mdns) score -= 5;
   score = Math.max(score,0);
 
-  let verdict="{T["low"]}", cls="low";
-  if (score < 75) {{ verdict="{T["mod"]}"; cls="mod"; }}
-  if (score < 45) {{ verdict="{T["high"]}"; cls="high"; }}
+  let verdictText = r.interfaces.length>0 ? 
+    (score<45 ? "{T['high']}" : score<75 ? "{T['mod']}" : "{T['low']}") 
+    : "{T['low']}";
+  let cls = score<45?"high":score<75?"mod":"low";
 
   document.getElementById("card").innerHTML = `
-    <span class="badge ${cls}">${{cls.toUpperCase().replace("MOD","MODERATE")}}</span>
+    <span class="badge ${cls}">${verdictText}</span>
     <div class="score">${{score}}/100</div>
     <div class="muted">{T["score"]}</div>
   `;
@@ -200,7 +190,7 @@ async function runScan() {{
   document.getElementById("explain").style.display = "block";
   document.getElementById("explain").innerHTML = `
     <strong>{T["explain_title"]}</strong>
-    <p style="margin-top:.5rem">${{verdict}}</p>
+    <p style="margin-top:.5rem">${verdictText}</p>
     <pre style="margin-top:1rem">${{JSON.stringify(r,null,2)}}</pre>
   `;
 }}
