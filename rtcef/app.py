@@ -122,7 +122,10 @@ f"""
   </button>
 </div>
 
-<div id="explain" class="card" style="display:none"></div>
+<div id="explain" class="card" style="display:none">
+  <p id="verdictText"></p>
+  <pre id="techJSON"></pre>
+</div>
 
 <script>
 async function runScan() {{
@@ -192,11 +195,8 @@ async function runScan() {{
 
   const explain = document.getElementById("explain");
   explain.style.display = "block";
-  explain.innerHTML = `
-    <strong>{T["explain_title"]}</strong>
-    <p style="margin-top:.5rem">${verdictText}</p>
-    <pre style="margin-top:1rem">${{JSON.stringify(r,null,2)}}</pre>
-  `;
+  document.getElementById("verdictText").textContent = verdictText;
+  document.getElementById("techJSON").textContent = JSON.stringify(r,null,2);
 }}
 </script>
 
