@@ -1,8 +1,7 @@
 import streamlit as st
-import json
 import yaml
-import streamlit.components.v1 as components
 from pathlib import Path
+from streamlit_javascript import st_javascript
 
 # ==================================================
 # LOAD POLICY (SINGLE SOURCE OF TRUTH)
@@ -10,13 +9,12 @@ from pathlib import Path
 POLICY_FILE = Path("policy.yaml")
 
 if not POLICY_FILE.exists():
-    st.error("policy.yaml not found — application halted")
+    st.error("policy.yaml missing — application halted")
     st.stop()
 
 policy = yaml.safe_load(POLICY_FILE.read_text())
 
 APP_MODE = policy["app"]["mode"]
-ETHICS = policy["ethics"]
 FEATURES = policy["features"]
 SIMULATION = policy["simulation"]
 UI = policy["ui"]
@@ -36,15 +34,15 @@ st.set_page_config(
 st.markdown("""
 <style>
 body { background:#0b0f17; color:#e6edf3; }
-.card { background:#0f1629; border:1px solid #1f2a44; border-radius:16px;
-        padding:1.6rem; margin-bottom:1.2rem; }
-.badge { padding:.35rem .8rem; border-radius:999px;
-         font-size:.72rem; font-weight:700; letter-spacing:.05em; }
+.card { background:#0f1629; border:1px solid #1f2a44;
+        border-radius:18px; padding:1.8rem; margin-bottom:1.2rem; }
+.badge { padding:.35rem .9rem; border-radius:999px;
+         font-size:.75rem; font-weight:700; letter-spacing:.05em; }
 .low { background:#064e3b; color:#6ee7b7; }
 .mod { background:#78350f; color:#fde68a; }
 .high{ background:#7f1d1d; color:#fecaca; }
 .muted { color:#9aa4b2; font-size:.85rem; }
-.score { font-size:3rem; font-weight:900; }
+.score { font-size:3.2rem; font-weight:900; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -52,75 +50,90 @@ body { background:#0b0f17; color:#e6edf3; }
 # HEADER
 # ==================================================
 st.markdown(f"## 🛡️ {policy['app']['name']}")
-st.markdown("<div class='muted'>Real‑time communication visibility assessment</div>", unsafe_allow_html=True)
+st.markdown(
+    "<div class='muted'>Real‑time communication visibility assessment</div>",
+    unsafe_allow_html=True
+)
 st.divider()
 
 # ==================================================
-# SIGNAL COLLECTION (TRUE MODE ONLY)
+# SIGNAL COLLECTION (REAL JS → PYTHON)
 # ==================================================
 signals = {}
 
 if APP_MODE == "true" and FEATURES["webrtc"]["enabled"]:
-    js = """
-    <script>
-    (async () => {
-      const s = {
-        ips: new Set(),
-        hasTURN:false, hasSRFLX:false, hasHOST:false,
-        mdns:false, ipv6:false, interfaces:new Set()
+
+    signals = st_javascript("""
+    async () => {
+      const result = {
+        hasTURN:false,
+        hasSRFLX:false,
+        hasHOST:false,
+        ipv6:false,
+        mdns:false,
+        interfaces:[]
       };
-      const pc = new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
-      pc.createDataChannel("x");
+
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      });
+
+      pc.createDataChannel("cb");
+
       pc.onicecandidate = e => {
-        if (!e || !e.candidate) {
-          window.parent.postMessage(JSON.stringify({
-            ips:[...s.ips], hasTURN:s.hasTURN, hasSRFLX:s.hasSRFLX,
-            hasHOST:s.hasHOST, mdns:s.mdns, ipv6:s.ipv6,
-            interfaces:[...s.interfaces]
-          }),"*");
-          return;
+        if (!e || !e.candidate) return;
+
+        const c = e.candidate.candidate;
+
+        if (c.includes(" typ relay ")) result.hasTURN = true;
+        if (c.includes(" typ srflx ")) result.hasSRFLX = true;
+        if (c.includes(" typ host ")) result.hasHOST = true;
+        if (c.includes(".local")) result.mdns = true;
+        if (c.includes("IP6") || c.includes("ip6")) result.ipv6 = true;
+
+        const ipv4 = c.match(/([0-9]{1,3}(\\.[0-9]{1,3}){3})/);
+        if (ipv4) {
+          const ip = ipv4[1];
+          if (
+            ip.startsWith("10.") ||
+            ip.startsWith("192.168.") ||
+            ip.startsWith("172.")
+          ) {
+            if (!result.interfaces.includes("LAN"))
+              result.interfaces.push("LAN");
+          } else {
+            if (!result.interfaces.includes("PUBLIC"))
+              result.interfaces.push("PUBLIC");
+          }
         }
-        const c=e.candidate.candidate;
-        if(c.includes(" typ relay ")) s.hasTURN=true;
-        if(c.includes(" typ srflx ")) s.hasSRFLX=true;
-        if(c.includes(" typ host ")) s.hasHOST=true;
-        if(c.includes(".local")) s.mdns=true;
-        const m4=c.match(/([0-9]{1,3}(\\.[0-9]{1,3}){3})/);
-        if(m4){
-          s.ips.add(m4[1]);
-          if(m4[1].startsWith("10.")||m4[1].startsWith("192.168.")||m4[1].startsWith("172."))
-            s.interfaces.add("LAN");
-          else s.interfaces.add("PUBLIC");
-        }
-        if(c.includes("IP6")) s.ipv6=true;
       };
-      const o=await pc.createOffer(); await pc.setLocalDescription(o);
-    })();
-    </script>
-    """
-    payload = components.html(js, height=0)
-    if payload:
-        try:
-            signals = json.loads(payload)
-        except:
-            signals = {}
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      pc.close();
+
+      return result;
+    }
+    """)
 
 # ==================================================
-# SIMULATION MODE (ONLY IF YAML ENABLES IT)
+# SIMULATION (ONLY IF POLICY ENABLES IT)
 # ==================================================
-if APP_MODE == "simulation" and SIMULATION["enabled"]:
-    level = SIMULATION["dataset"]
-    if level == "mock_low":
+if SIMULATION["enabled"]:
+    dataset = SIMULATION["dataset"]
+    if dataset == "mock_low":
         signals = {"hasTURN":True,"hasHOST":False,"hasSRFLX":False,"interfaces":[]}
-    elif level == "mock_medium":
+    elif dataset == "mock_medium":
         signals = {"hasTURN":False,"hasHOST":True,"hasSRFLX":True,"interfaces":["LAN"]}
-    else:
+    elif dataset == "mock_high":
         signals = {"hasTURN":False,"hasHOST":True,"hasSRFLX":True,"interfaces":["LAN","PUBLIC"]}
 
 # ==================================================
-# SCORING (CORRELATED)
+# SCORING (CORRELATED, REAL)
 # ==================================================
-score = FEATURES["scoring"]["max_score"]
+score = policy["features"]["scoring"]["max_score"]
 
 if signals.get("hasHOST"): score -= 15
 if signals.get("hasSRFLX"): score -= 20
@@ -128,6 +141,8 @@ if not signals.get("hasTURN"): score -= 15
 if "PUBLIC" in signals.get("interfaces",[]): score -= 20
 if "LAN" in signals.get("interfaces",[]): score -= 10
 if len(signals.get("interfaces",[])) > 1: score -= 10
+if signals.get("ipv6"): score -= 10
+if not signals.get("mdns"): score -= 5
 
 score = max(score, 0)
 
@@ -139,7 +154,7 @@ else:
     verdict, cls = "HIGH VISIBILITY", "high"
 
 # ==================================================
-# UI
+# UI OUTPUT
 # ==================================================
 st.markdown(f"""
 <div class="card">
@@ -153,10 +168,5 @@ if UI["show_technical_details"]:
     with st.expander("🔍 Technical signals"):
         st.json(signals)
 
-# ==================================================
-# FOOTER
-# ==================================================
 st.divider()
-st.caption(
-    "Behavior controlled by policy.yaml — passive, client‑side, ethical by design."
-)
+st.caption("Behavior controlled by policy.yaml — passive, client‑side, ethical by design.")
