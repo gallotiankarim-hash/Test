@@ -1,0 +1,10 @@
+app:
+  name: RTCEF
+  version: 0.1
+  debug: true
+
+analysis:
+  ice: true
+  stun: true
+  rtp: true
+  timing: true

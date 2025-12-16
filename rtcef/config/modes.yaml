@@ -1,0 +1,8 @@
+modes:
+  observe_local: true
+  observe_remote: true
+  resolve_geo: true
+  store_ip: true
+  anonymize_output: false
+  third_party_visibility: full
+  scoring_enabled: true
