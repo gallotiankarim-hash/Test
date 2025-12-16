@@ -29,8 +29,11 @@ st.set_page_config(
 )
 
 # ==================================================
-# SESSION STATE
+# SESSION STATE (DETERMINISTIC)
 # ==================================================
+if "scan_state" not in st.session_state:
+    st.session_state.scan_state = "idle"  # idle | scanning | done
+
 if "signals" not in st.session_state:
     st.session_state.signals = None
 
@@ -57,8 +60,9 @@ body { background:#0b0f17; color:#e6edf3; }
 .low { background:#064e3b; color:#6ee7b7; }
 .mod { background:#78350f; color:#fde68a; }
 .high{ background:#7f1d1d; color:#fecaca; }
-.muted { color:#9aa4b2; font-size:.85rem; }
+.idle{ background:#1f2937; color:#9ca3af; }
 .score { font-size:3.2rem; font-weight:900; }
+.muted { color:#9aa4b2; font-size:.85rem; }
 button[kind="primary"] {
   background:#2563eb;
   border-radius:12px;
@@ -77,121 +81,129 @@ st.markdown(
 st.divider()
 
 # ==================================================
-# USER ACTION (MANDATORY TRIGGER)
+# ACTION
 # ==================================================
-run_scan = st.button("🔎 Run visibility scan", type="primary")
+if st.button("🔎 Run visibility scan", type="primary"):
+    st.session_state.scan_state = "scanning"
+    st.session_state.signals = None
 
 # ==================================================
-# REAL SIGNAL COLLECTION (JS → PYTHON)
+# SCAN (REAL JS → PYTHON)
 # ==================================================
 if (
-    run_scan
+    st.session_state.scan_state == "scanning"
     and APP_MODE == "true"
     and FEATURES["webrtc"]["enabled"]
 ):
-    result = st_javascript(
-        """
-        async () => {
-          const r = {
-            hasTURN:false,
-            hasSRFLX:false,
-            hasHOST:false,
-            ipv6:false,
-            mdns:false,
-            interfaces:[]
-          };
+    with st.spinner("Scanning network visibility…"):
+        result = st_javascript(
+            """
+            async () => {
+              const r = {
+                hasTURN:false,
+                hasSRFLX:false,
+                hasHOST:false,
+                ipv6:false,
+                mdns:false,
+                interfaces:[]
+              };
 
-          const pc = new RTCPeerConnection({
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-          });
+              const pc = new RTCPeerConnection({
+                iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+              });
 
-          pc.createDataChannel("cb");
+              pc.createDataChannel("cb");
 
-          pc.onicecandidate = e => {
-            if (!e || !e.candidate) return;
+              pc.onicecandidate = e => {
+                if (!e || !e.candidate) return;
+                const c = e.candidate.candidate;
 
-            const c = e.candidate.candidate;
+                if (c.includes(" typ relay ")) r.hasTURN = true;
+                if (c.includes(" typ srflx ")) r.hasSRFLX = true;
+                if (c.includes(" typ host ")) r.hasHOST = true;
+                if (c.includes(".local")) r.mdns = true;
+                if (c.toLowerCase().includes("ip6")) r.ipv6 = true;
 
-            if (c.includes(" typ relay ")) r.hasTURN = true;
-            if (c.includes(" typ srflx ")) r.hasSRFLX = true;
-            if (c.includes(" typ host ")) r.hasHOST = true;
-            if (c.includes(".local")) r.mdns = true;
-            if (c.toLowerCase().includes("ip6")) r.ipv6 = true;
+                const ip = c.match(/([0-9]{1,3}(\\.[0-9]{1,3}){3})/);
+                if (ip) {
+                  const v = ip[1];
+                  if (
+                    v.startsWith("10.") ||
+                    v.startsWith("192.168.") ||
+                    v.startsWith("172.")
+                  ) {
+                    if (!r.interfaces.includes("LAN")) r.interfaces.push("LAN");
+                  } else {
+                    if (!r.interfaces.includes("PUBLIC")) r.interfaces.push("PUBLIC");
+                  }
+                }
+              };
 
-            const ip = c.match(/([0-9]{1,3}(\\.[0-9]{1,3}){3})/);
-            if (ip) {
-              const v = ip[1];
-              if (
-                v.startsWith("10.") ||
-                v.startsWith("192.168.") ||
-                v.startsWith("172.")
-              ) {
-                if (!r.interfaces.includes("LAN")) r.interfaces.push("LAN");
-              } else {
-                if (!r.interfaces.includes("PUBLIC")) r.interfaces.push("PUBLIC");
-              }
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              pc.close();
+
+              return r;
             }
-          };
+            """,
+            key="webrtc_scan"
+        )
 
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-
-          await new Promise(resolve => setTimeout(resolve, 2500));
-          pc.close();
-
-          return r;
-        }
-        """,
-        key="webrtc_scan"
-    )
-
-    if result:
-        st.session_state.signals = result
+        if result:
+            st.session_state.signals = result
+            st.session_state.scan_state = "done"
 
 # ==================================================
-# SIMULATION (ONLY IF POLICY ENABLES IT)
+# SIMULATION (POLICY‑DRIVEN ONLY)
 # ==================================================
 if SIMULATION["enabled"]:
-    dataset = SIMULATION["dataset"]
-    if dataset == "mock_low":
-        st.session_state.signals = {
-            "hasTURN":True,"hasHOST":False,"hasSRFLX":False,"interfaces":[]
+    st.session_state.signals = {
+        "mock_low": {
+            "hasTURN": True, "hasHOST": False, "hasSRFLX": False, "interfaces": []
+        },
+        "mock_medium": {
+            "hasTURN": False, "hasHOST": True, "hasSRFLX": True, "interfaces": ["LAN"]
+        },
+        "mock_high": {
+            "hasTURN": False, "hasHOST": True, "hasSRFLX": True,
+            "interfaces": ["LAN", "PUBLIC"]
         }
-    elif dataset == "mock_medium":
-        st.session_state.signals = {
-            "hasTURN":False,"hasHOST":True,"hasSRFLX":True,"interfaces":["LAN"]
-        }
-    elif dataset == "mock_high":
-        st.session_state.signals = {
-            "hasTURN":False,"hasHOST":True,"hasSRFLX":True,"interfaces":["LAN","PUBLIC"]
-        }
+    }.get(SIMULATION["dataset"], None)
+    st.session_state.scan_state = "done"
 
-signals = st.session_state.signals or {}
+signals = st.session_state.signals
 
 # ==================================================
-# SCORING (CORRELATED)
+# VERDICT & SCORE (ONLY IF SCAN DONE)
 # ==================================================
-score = policy["features"]["scoring"]["max_score"]
+if st.session_state.scan_state == "done" and signals:
 
-if signals.get("hasHOST"): score -= 15
-if signals.get("hasSRFLX"): score -= 20
-if not signals.get("hasTURN"): score -= 15
-if "PUBLIC" in signals.get("interfaces", []): score -= 20
-if "LAN" in signals.get("interfaces", []): score -= 10
-if len(signals.get("interfaces", [])) > 1: score -= 10
-if signals.get("ipv6"): score -= 10
-if not signals.get("mdns") and signals: score -= 5
+    score = policy["features"]["scoring"]["max_score"]
 
-score = max(score, 0)
+    if signals.get("hasHOST"): score -= 15
+    if signals.get("hasSRFLX"): score -= 20
+    if not signals.get("hasTURN"): score -= 15
+    if "PUBLIC" in signals.get("interfaces", []): score -= 20
+    if "LAN" in signals.get("interfaces", []): score -= 10
+    if len(signals.get("interfaces", [])) > 1: score -= 10
+    if signals.get("ipv6"): score -= 10
+    if not signals.get("mdns"): score -= 5
 
-if not signals:
-    verdict, cls = "NO SCAN RUN", "mod"
-elif score >= 75:
-    verdict, cls = "LOW VISIBILITY", "low"
-elif score >= 45:
-    verdict, cls = "MODERATE VISIBILITY", "mod"
+    score = max(score, 0)
+
+    if score >= 75:
+        verdict, cls = "LOW VISIBILITY", "low"
+    elif score >= 45:
+        verdict, cls = "MODERATE VISIBILITY", "mod"
+    else:
+        verdict, cls = "HIGH VISIBILITY", "high"
+
+elif st.session_state.scan_state == "scanning":
+    verdict, cls, score = "SCANNING…", "mod", None
 else:
-    verdict, cls = "HIGH VISIBILITY", "high"
+    verdict, cls, score = "NO SCAN RUN", "idle", None
 
 # ==================================================
 # UI OUTPUT
@@ -199,12 +211,14 @@ else:
 st.markdown(f"""
 <div class="card">
   <span class="badge {cls}">{verdict}</span>
-  <div class="score">{score}/100</div>
+  <div class="score">
+    {"— / 100" if score is None else f"{score}/100"}
+  </div>
   <div class="muted">Visibility score (policy‑driven)</div>
 </div>
 """, unsafe_allow_html=True)
 
-if UI["show_technical_details"]:
+if UI["show_technical_details"] and signals:
     with st.expander("🔍 Technical signals"):
         st.json(signals)
 
