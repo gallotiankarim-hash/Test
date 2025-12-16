@@ -61,15 +61,33 @@ components.html(
 """
 <!DOCTYPE html>
 <html>
-<body>
+<body style="background:#0f1629;color:#e6edf3;font-family:system-ui">
+
 <div id="result" class="card">
-  <div class="badge mod">READY</div>
+  <span class="badge idle">READY</span>
   <div class="score">— / 100</div>
   <div class="muted">Click start to run scan</div>
+  <button onclick="runScan()" style="
+    margin-top:1rem;
+    padding:.6rem 1.2rem;
+    border-radius:12px;
+    border:none;
+    background:#2563eb;
+    color:white;
+    font-weight:600;
+    cursor:pointer;">
+    ▶ Start visibility scan
+  </button>
 </div>
 
 <script>
 async function runScan() {
+
+  document.getElementById("result").innerHTML = `
+    <span class="badge mod">SCANNING…</span>
+    <div class="score">— / 100</div>
+    <div class="muted">Analyzing WebRTC exposure…</div>
+  `;
 
   const r = {
     hasTURN:false,
@@ -137,13 +155,32 @@ async function runScan() {
     <pre style="margin-top:1rem">${JSON.stringify(r,null,2)}</pre>
   `;
 }
-
-setTimeout(runScan, 500);
 </script>
+
+<style>
+.card {
+  border:1px solid #1f2a44;
+  border-radius:18px;
+  padding:1.6rem;
+}
+.badge {
+  padding:.35rem .9rem;
+  border-radius:999px;
+  font-size:.75rem;
+  font-weight:700;
+}
+.low { background:#064e3b; color:#6ee7b7; }
+.mod { background:#78350f; color:#fde68a; }
+.high{ background:#7f1d1d; color:#fecaca; }
+.idle{ background:#1f2937; color:#9ca3af; }
+.score { font-size:3rem; font-weight:900; }
+.muted { color:#9aa4b2; font-size:.85rem; }
+</style>
+
 </body>
 </html>
 """,
-height=520
+height=600
 )
 
 st.divider()
