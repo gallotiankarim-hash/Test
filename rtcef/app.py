@@ -41,7 +41,7 @@ LANGS = {
     },
     "DE": {
         "title": "Sichtbarkeitsbewertung von Echtzeitkommunikation",
-        "intro": "Diese Analyse läuft vollständig in Ihrem Browser. Es werden keine Daten übertragen oder gespeichert.",
+        "intro": "Diese Analyse läuft vollständig in Ihrem Browser. Es werden keine Daten übertragen, gespeichert oder geteilt.",
         "start": "Scan starten",
         "ready": "BEREIT",
         "scanning": "ANALYSE…",
@@ -176,19 +176,23 @@ async function runScan() {{
   if (!r.mdns) score -= 5;
   score = Math.max(score,0);
 
-  let verdictText = r.interfaces.length>0 ? 
-    (score<45 ? "{T['high']}" : score<75 ? "{T['mod']}" : "{T['low']}") 
-    : "{T['low']}";
-  let cls = score<45?"high":score<75?"mod":"low";
+  let verdictText = score < 45 ? "{T['high']}" : score < 75 ? "{T['mod']}" : "{T['low']}";
+  let cls = score < 45 ? "high" : score < 75 ? "mod" : "low";
 
-  document.getElementById("card").innerHTML = `
-    <span class="badge ${cls}">${verdictText}</span>
+  // UPDATE UI
+  const card = document.getElementById("card");
+  card.innerHTML = `
+    <span class="badge" id="verdict"></span>
     <div class="score">${{score}}/100</div>
     <div class="muted">{T["score"]}</div>
   `;
+  const verdictElem = document.getElementById("verdict");
+  verdictElem.textContent = verdictText;
+  verdictElem.className = "badge " + cls;
 
-  document.getElementById("explain").style.display = "block";
-  document.getElementById("explain").innerHTML = `
+  const explain = document.getElementById("explain");
+  explain.style.display = "block";
+  explain.innerHTML = `
     <strong>{T["explain_title"]}</strong>
     <p style="margin-top:.5rem">${verdictText}</p>
     <pre style="margin-top:1rem">${{JSON.stringify(r,null,2)}}</pre>
